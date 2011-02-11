@@ -21,6 +21,7 @@ package solandra;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.*;
@@ -55,6 +56,7 @@ import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
 import org.apache.solr.client.solrj.impl.StreamingUpdateSolrServer;
 import org.apache.solr.common.SolrException;
+import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.core.SolandraCoreContainer;
@@ -246,7 +248,7 @@ public class SolandraIndexWriter extends UpdateHandler
             if (!addr.equals(FBUtilities.getLocalAddress()))
             {
 
-                CommonsHttpSolrServer connection = new CommonsHttpSolrServer("http://"+addr.getHostAddress() + ":8983/solandra/"
+                CommonsHttpSolrServer connection = new SolandraHttpConnection("http://"+addr.getHostAddress() + ":8983/solandra/"
                         + coreInfo.indexString, new HttpClient(httpConnections));
                 try
                 {
@@ -562,4 +564,17 @@ public class SolandraIndexWriter extends UpdateHandler
             times.set(0);
         }
     }
+    
+    private class SolandraHttpConnection extends CommonsHttpSolrServer
+    {
+
+        public SolandraHttpConnection(String solrServerUrl, HttpClient httpClient) throws MalformedURLException
+        {
+            super(solrServerUrl, httpClient);
+            
+            _invariantParams = new ModifiableSolrParams();
+        }
+        
+    }
+    
 }
