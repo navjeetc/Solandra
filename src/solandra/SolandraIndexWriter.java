@@ -246,7 +246,7 @@ public class SolandraIndexWriter extends UpdateHandler
             if (!addr.equals(FBUtilities.getLocalAddress()))
             {
 
-                CommonsHttpSolrServer connection = new CommonsHttpSolrServer(addr.getHostAddress() + ":8983/solandra/"
+                CommonsHttpSolrServer connection = new CommonsHttpSolrServer("http://"+addr.getHostAddress() + ":8983/solandra/"
                         + coreInfo.indexString, new HttpClient(httpConnections));
                 try
                 {
