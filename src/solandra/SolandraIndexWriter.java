@@ -20,12 +20,14 @@
 package solandra;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.servlet.http.HttpServletRequest;
 
 import lucandra.CassandraUtils;
 import lucandra.cluster.CassandraIndexManager;
@@ -33,10 +35,15 @@ import lucandra.cluster.IndexManagerService;
 
 import com.google.common.collect.MapMaker;
 
-import org.apache.cassandra.db.IColumn;
-import org.apache.cassandra.db.Row;
-import org.apache.cassandra.db.RowMutation;
+import org.apache.commons.httpclient.HostConfiguration;
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.MultiThreadedHttpConnectionManager;
+import org.apache.commons.pool.KeyedObjectPool;
+
+import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.QueryPath;
+import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.ConsistencyLevel;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
@@ -44,6 +51,9 @@ import org.apache.log4j.Logger;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
+import org.apache.solr.client.solrj.SolrServerException;
+import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
+import org.apache.solr.client.solrj.impl.StreamingUpdateSolrServer;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
@@ -58,10 +68,13 @@ public class SolandraIndexWriter extends UpdateHandler
 {
     // To manage cached reads
     private static final LinkedBlockingQueue<String>          flushQueue                      = new LinkedBlockingQueue<String>();
-    private final ExecutorService                             flushMonitor                    = Executors.newSingleThreadExecutor();
+    private final ExecutorService                             flushMonitor                    = Executors
+                                                                                                      .newSingleThreadExecutor();
+    private final static MultiThreadedHttpConnectionManager   httpConnections                 = new MultiThreadedHttpConnectionManager();
 
     private final static lucandra.IndexWriter                 writer                          = new lucandra.IndexWriter();
-    private final static Logger                               logger                          = Logger.getLogger(SolandraIndexWriter.class);
+    private final static Logger                               logger                          = Logger
+                                                                                                      .getLogger(SolandraIndexWriter.class);
 
     // stats
     AtomicLong                                                addCommands                     = new AtomicLong();
@@ -186,24 +199,36 @@ public class SolandraIndexWriter extends UpdateHandler
 
             Long docId = null;
             RowMutation[] rms = null;
-
-            //Allow this to be bypassed
-            String batchMode = SolandraCoreContainer.activeRequest.get().getParameter("batch");
-            
-            if( !coreInfo.bulk && !cmd.allowDups && (batchMode == null || !batchMode.equals("true")))
-                docId = IndexManagerService.instance.getId(coreInfo.indexName, key);
-           
-            
             boolean isUpdate = false;
-            if (docId != null)
-            {
-                isUpdate = true;
-                // if(logger.isDebugEnabled())
-                logger.info("update for document " + docId);
-            }
-            else
-            {
 
+            HttpServletRequest requestParams = SolandraCoreContainer.activeRequest.get();
+
+            // Allow this to be bypassed
+            String batchModeStr = requestParams.getParameter("batch");
+            String useIDStr = requestParams.getParameter("useID");
+            String isUpdateStr = requestParams.getParameter("isUpdate");
+
+            // Was this a proxy write?
+            if (useIDStr != null && !useIDStr.isEmpty())
+            {
+                docId = Long.valueOf(useIDStr);
+                if (isUpdateStr != null && isUpdateStr.equals("true"))
+                {
+                    isUpdate = true;
+                }  
+            }
+
+            // Is this an update?
+            if (docId == null && !coreInfo.bulk && !cmd.allowDups
+                    && (batchModeStr == null || !batchModeStr.equals("true")))
+            {
+                docId = IndexManagerService.instance.getId(coreInfo.indexName, key);
+                if (docId != null)
+                    isUpdate = true;
+            }
+
+            if (docId == null)
+            {
                 rms = new RowMutation[3];
 
                 docId = IndexManagerService.instance.getNextId(coreInfo.indexName, key, rms);
@@ -216,25 +241,56 @@ public class SolandraIndexWriter extends UpdateHandler
             int shardedId = CassandraIndexManager.getShardedDocId(docId);
             String indexName = coreInfo.indexName + "~" + shard;
 
-            // logger.info("adding doc to"+indexName);
+            InetAddress addr = getIndexLocation(indexName);
 
-            if (logger.isDebugEnabled())
-                logger.debug("Adding " + shardedId + " to " + indexName);
+            if (!addr.equals(FBUtilities.getLocalAddress()))
+            {
 
-            Term idTerm = this.idTerm.createTerm(cmd.indexedId);
+                CommonsHttpSolrServer connection = new CommonsHttpSolrServer(addr.getHostAddress() + ":8983/solandra/"
+                        + coreInfo.indexString, new HttpClient(httpConnections));
+                try
+                {
+                    connection.getInvariantParams().set("isUpdate", true);
+                    connection.getInvariantParams().set("useID", docId.toString());
 
-            if (isUpdate)
-                writer.updateDocument(indexName, idTerm, cmd.getLuceneDocument(schema), schema.getAnalyzer(),
-                        shardedId, false);
-            else
-                writer.addDocument(indexName, cmd.getLuceneDocument(schema), schema.getAnalyzer(), shardedId, false,
-                        rms);
+                    connection.add(cmd.getSolrInputDocument());
+
+                    if(rms != null)
+                        CassandraUtils.robustInsert(ConsistencyLevel.ONE, rms);
+                    
+                    
+                    rc = 1;
+                    return rc;
+                }
+                catch (SolrServerException e)
+                {
+                    logger.info("Remote write failed, falling back to local write", e);
+
+                }
+
+            }
+
+            // Local write
+            {
+                // logger.info("adding doc to"+indexName);
+
+                if (logger.isDebugEnabled())
+                    logger.debug("Adding " + shardedId + " to " + indexName);
+
+                Term idTerm = this.idTerm.createTerm(cmd.indexedId);
+
+                if (isUpdate)
+                    writer.updateDocument(indexName, idTerm, cmd.getLuceneDocument(schema), schema.getAnalyzer(),
+                            shardedId, false);
+                else
+                    writer.addDocument(indexName, cmd.getLuceneDocument(schema), schema.getAnalyzer(), shardedId,
+                            false, rms);
+
+                // Notify readers
+                tryCommit(indexName);
+            }
 
             rc = 1;
-
-            // Notify readers
-            tryCommit(indexName);
-
         }
         finally
         {
@@ -249,12 +305,24 @@ public class SolandraIndexWriter extends UpdateHandler
 
     }
 
-    public void close() throws IOException
+    private InetAddress getIndexLocation(String subIndex)
     {
-        // hehe
+
+        Token<?> t = StorageService.getPartitioner().getToken(ByteBuffer.wrap(subIndex.getBytes()));
+        List<InetAddress> addrs = Table.open(CassandraUtils.keySpace).getReplicationStrategy().getNaturalEndpoints(t);
+
+        if (addrs.contains(FBUtilities.getLocalAddress()))
+        {
+            return FBUtilities.getLocalAddress();
+        }
+
+        return addrs.get(0);
     }
 
-    // TODO: flush all sub-index caches?
+    public void close() throws IOException
+    {
+    }
+
     public void commit(CommitUpdateCommand cmd) throws IOException
     {
 

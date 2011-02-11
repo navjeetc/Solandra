@@ -25,6 +25,7 @@ import java.util.regex.Pattern;
 public class SolandraCoreInfo
 {
     
+    public final String  indexString;
     public final String  coreName;
     public final String  indexName;
     public final Integer shard;
@@ -35,6 +36,8 @@ public class SolandraCoreInfo
     
     public SolandraCoreInfo(String indexString)
     {
+        this.indexString = indexString;
+        
         Matcher m = shardPattern.matcher(indexString);
         
         if(!m.find())

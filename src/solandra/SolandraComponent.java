@@ -40,6 +40,7 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.ConsistencyLevel;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.log4j.Logger;
 import org.apache.lucene.document.FieldSelector;
 import org.apache.solr.common.params.ShardParams;
@@ -184,6 +185,21 @@ public class SolandraComponent extends SearchComponent
                 return;
             }
             
+            
+            Map<InetAddress, String> shardsByNode = new HashMap<InetAddress, String>();
+            for (int i = 0; i <= numShards; i++)
+            {
+                ByteBuffer subIndex = CassandraUtils.hashBytes((indexName + "~" + i).getBytes());
+                Token<?> t = StorageService.getPartitioner().getToken(subIndex);
+                List<InetAddress> addrs = Table.open(CassandraUtils.keySpace).getReplicationStrategy().getNaturalEndpoints(t);
+
+                if(addrs.contains(FBUtilities.getLocalAddress()))
+                {
+                    
+                }
+                
+            }
+                
             // assign shards
             String[] shards = new String[numShards + 1];
 

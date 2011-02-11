@@ -308,8 +308,8 @@ public class CassandraIndexManager
     public String getToken()
     {
         return StorageService.instance.getTokenMetadata().getToken(FBUtilities.getLocalAddress()).toString();
-    }
-
+    } 
+    
     public long getNextId(String indexName, String key, RowMutation[] rowMutations) throws IOException
     {
         if (rowMutations.length != 3)
@@ -354,7 +354,9 @@ public class CassandraIndexManager
         // Permanently link the key to the id
         ByteBuffer keyKey = CassandraUtils.hashKeyBytes((indexName + "~" + key).getBytes(),
                 CassandraUtils.delimeterBytes, "keys".getBytes());
+        
         Long val = new Long(idInfo.id + (idInfo.node.shard * CassandraUtils.maxDocsPerShard));
+        
         ByteBuffer idVal = ByteBuffer.wrap(val.toString().getBytes());
 
         RowMutation rm2 = new RowMutation(CassandraUtils.keySpace, keyKey);

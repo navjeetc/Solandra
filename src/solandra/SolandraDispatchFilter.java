@@ -19,30 +19,21 @@
  */
 package solandra;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.ServletRequest;
-import javax.servlet.ServletResponse;
+import java.io.*;
+import javax.servlet.*;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import lucandra.cluster.CassandraIndexManager;
+import lucandra.cluster.IndexManagerService;
 
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.core.SolandraCoreContainer;
+import org.apache.solr.core.SolandraCoreInfo;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.core.CoreContainer.Initializer;
-import org.apache.solr.handler.RequestHandlerBase;
-import org.apache.solr.request.BinaryQueryResponseWriter;
-import org.apache.solr.request.QueryResponseWriter;
-import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.request.SolrQueryResponse;
-import org.apache.solr.request.SolrRequestHandler;
+import org.apache.solr.request.*;
 import org.apache.solr.servlet.SolrDispatchFilter;
 import org.apache.solr.servlet.cache.Method;
 
@@ -51,6 +42,15 @@ public class SolandraDispatchFilter extends SolrDispatchFilter
 
     private static final String schemaPrefix = "/schema";
 
+    
+    @Override
+    protected Initializer createInitializer()
+    {
+        SolandraInitializer init = new SolandraInitializer();
+
+        return init;
+    }
+    
     @Override
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException,
             ServletException
@@ -60,7 +60,7 @@ public class SolandraDispatchFilter extends SolrDispatchFilter
         HttpServletRequest req = (HttpServletRequest) request;
         HttpServletResponse resp = (HttpServletResponse) response;
 
-        String indexName = "";
+        
         String path = req.getServletPath();
         
         if (req.getPathInfo() != null)
@@ -68,83 +68,21 @@ public class SolandraDispatchFilter extends SolrDispatchFilter
             // this lets you handle /update/commit when /update is a servlet
             path += req.getPathInfo();
         }
-        
+    
+        //Check for schema queries
+        //TODO: break this out to a separate handler...
         if (path.startsWith(schemaPrefix))
         {
-            path = path.substring(schemaPrefix.length());
-
-            // otherwise, we should find a index from the path
-            int idx = path.indexOf("/", 1);
-            if (idx > 1)
-            {
-                // try to get the index as a request parameter first
-                indexName = path.substring(1, idx);
-            }
-            else
-            {
-                indexName = path.substring(1);
-            }
-
-            // REST
-            String method = req.getMethod().toUpperCase();
-
-            if (method.equals("GET"))
-            {
-                try
-                {
-                    String schema = SolandraCoreContainer.getCoreMetaInfo(indexName);
-                    response.setContentType("text/xml");
-                    PrintWriter out = resp.getWriter();
-
-                    out.print(schema);
-
-                }
-                catch (IOException e)
-                {
-                    resp.sendError(404);
-                }
-
-                return;
-            }
-
-            if (method.equals("POST") || method.equals("PUT"))
-            {
-                try
-                {
-
-                    BufferedReader rd = new BufferedReader(new InputStreamReader(req.getInputStream()));
-                    String line;
-                    String xml = "";
-                    while ((line = rd.readLine()) != null)
-                    {
-                        xml += line + "\n";
-                    }
-
-                    SolandraCoreContainer.writeSchema(indexName, xml);
-
-                }
-                catch (IOException e)
-                {
-                    resp.sendError(500);
-                }
-                return;
-            }
+            handleSchemaRequest(req, resp, path);
+            return;
         }
 
         SolandraCoreContainer.activeRequest.set(req);
+              
         
         super.doFilter(request, response, chain);
     }
-
-   
-
-    @Override
-    protected Initializer createInitializer()
-    {
-        SolandraInitializer init = new SolandraInitializer();
-
-        return init;
-    }
+  
 
     @Override
     protected void execute(HttpServletRequest req, SolrRequestHandler handler, SolrQueryRequest sreq,
@@ -162,13 +100,23 @@ public class SolandraDispatchFilter extends SolrDispatchFilter
             path = path.substring(pathPrefix.length());
         }
 
-        int idx = path.indexOf("/", 1);
-        if (idx > 1)
+        int nameidx = path.indexOf("/", 1);
+        if (nameidx > 1)
         {         
             // try to get the corename as a request parameter first
-            sreq.getContext().put("solandra-index", path.substring(1, idx));
+            sreq.getContext().put("solandra-index", path.substring(1, nameidx));
+            
+            //get the operation
+            int opidx = path.indexOf("/", nameidx+1);
+            String op = path.substring(nameidx+1);
+            if (opidx > 1)
+            {
+                op = op.substring(1,opidx);
+            }
+                      
         }
-
+        
+       
         super.execute(req, handler, sreq, rsp);
     }
 
@@ -227,5 +175,73 @@ public class SolandraDispatchFilter extends SolrDispatchFilter
             // just to get ContentType
         }
     }
+    
+    
+    private void handleSchemaRequest(HttpServletRequest req, HttpServletResponse resp, String path) throws IOException
+    {
+        String indexName = "";
+        
+        if (path.startsWith(schemaPrefix))
+        {
+            path = path.substring(schemaPrefix.length());
 
+            // otherwise, we should find a index from the path
+            int idx = path.indexOf("/", 1);
+            if (idx > 1)
+            {
+                // try to get the index as a request parameter first
+                indexName = path.substring(1, idx);
+            }
+            else
+            {
+                indexName = path.substring(1);
+            }
+
+            // REST
+            String method = req.getMethod().toUpperCase();
+
+            if (method.equals("GET"))
+            {
+                try
+                {
+                    String schema = SolandraCoreContainer.getCoreMetaInfo(indexName);
+                    resp.setContentType("text/xml");
+                    PrintWriter out = resp.getWriter();
+
+                    out.print(schema);
+
+                }
+                catch (IOException e)
+                {
+                    resp.sendError(404);
+                }
+
+                return;
+            }
+
+            if (method.equals("POST") || method.equals("PUT"))
+            {
+                try
+                {
+
+                    BufferedReader rd = new BufferedReader(new InputStreamReader(req.getInputStream()));
+                    String line;
+                    String xml = "";
+                    while ((line = rd.readLine()) != null)
+                    {
+                        xml += line + "\n";
+                    }
+
+                    SolandraCoreContainer.writeSchema(indexName, xml);
+
+                }
+                catch (IOException e)
+                {
+                    resp.sendError(500);
+                }
+                return;
+            }
+        }
+    }
+    
 }
