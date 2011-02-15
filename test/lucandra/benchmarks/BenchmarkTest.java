@@ -102,9 +102,12 @@ public class BenchmarkTest {
                         
                         if(indexName.equals(""))
                             fullUrl = url + ":" + port +  "/solr";
+                        else if(type == Type.write)
+                            fullUrl = url + ":" + port +  "/solandra/~"+indexName;
                         else
                             fullUrl = url + ":" + port +  "/solandra/"+indexName;
-                        
+
+                            
                         if(type == Type.write)
                             solrClient = getStreamingServer(fullUrl);
                         else

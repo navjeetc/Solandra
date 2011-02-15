@@ -53,9 +53,10 @@ public class WikipediaIndexWorker implements Callable<Integer> {
                 while ((docs = allDocBuffers.poll()) != null) {
                     try {
                        
-                        if(!docs.isEmpty())
+                        if(!docs.isEmpty()){
                             oneClient.add(docs);
-                            
+                        }
+                        
                     } catch (SolrServerException e) {
                         // TODO Auto-generated catch block
                         e.printStackTrace();
@@ -65,6 +66,20 @@ public class WikipediaIndexWorker implements Callable<Integer> {
                     }
                 }
 
+                try
+                {
+                    oneClient.commit();
+                }
+                catch (SolrServerException e)
+                {
+                    // TODO Auto-generated catch block
+                    e.printStackTrace();
+                }
+                catch (IOException e)
+                {
+                    // TODO Auto-generated catch block
+                    e.printStackTrace();
+                }
                 System.err.println("committed");
             }
         });
