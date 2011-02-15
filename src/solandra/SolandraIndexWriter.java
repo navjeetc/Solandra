@@ -232,7 +232,7 @@ public class SolandraIndexWriter extends UpdateHandler
                 isBatch = true;
             
             
-            // Is this an update?
+            // Is this an update? (only non batch mode)
             if (docId == null && !isBatch)
             {                
                 docId = IndexManagerService.instance.getId(coreInfo.indexName, key);
@@ -241,7 +241,7 @@ public class SolandraIndexWriter extends UpdateHandler
                     isUpdate = true;
             }
    
-            if (docId != null)
+            if (docId != null && !isBatch)
             {
                 isUpdate = true;
                 if(logger.isDebugEnabled())

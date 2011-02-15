@@ -41,7 +41,6 @@ public class WikipediaIndexWorker implements Callable<Integer> {
     private static AtomicInteger connectionCounter = new AtomicInteger(0);
     private static CommonsHttpSolrServer oneClient;
     public  static final ArrayList<String> hosts = new ArrayList<String>();
-    private static final Random r = new Random();
     
     static int port = 8983;
     
@@ -106,6 +105,7 @@ public class WikipediaIndexWorker implements Callable<Integer> {
             indexWriter.setAllowCompression(true);
             
             clientPool.set(indexWriter);
+            oneClient = indexWriter;
         }
 
         return indexWriter;
